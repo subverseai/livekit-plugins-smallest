@@ -30,10 +30,10 @@ API_BASE_URL = "https://waves-api.smallest.ai/api/v1"
 class _TTSOptions:
     model: TTSModels
     encoding: TTSEncoding
-    sample_rate: NotGivenOr[int] = NOT_GIVEN  # 8000-24000, default 24000
     voice: str
     api_key: str
     language: TTSLanguages # en, hi, mr, kn, ta, bn, gu, de, fr, es, it, pl, nl, ru, ar, he
+    sample_rate: NotGivenOr[int] = NOT_GIVEN  # 8000-24000, default 24000
     add_wav_header: NotGivenOr[bool] = NOT_GIVEN # default False
     transliterate: NotGivenOr[bool] = NOT_GIVEN # default False
     similarity: NotGivenOr[float] = NOT_GIVEN  # 0-1, default 0
