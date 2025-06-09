@@ -48,13 +48,12 @@ _DefaultEncoding: int = 24000
 
 @dataclass
 class VoiceSettings:
-    sample_rate: NotGivenOr[int] = NOT_GIVEN  # 8000-24000, default 24000
+    similarity: NotGivenOr[float] = NOT_GIVEN  # 0-1, default 0
     speed: NotGivenOr[float] = NOT_GIVEN  # 0.5-2.0, default 1.0
     consistency: NotGivenOr[float] = NOT_GIVEN  # 0-1, default 0.5
     enhancement: NotGivenOr[int] = NOT_GIVEN  # 0-2, default 1
-    similarity: NotGivenOr[float] = NOT_GIVEN  # 0-1, default 0
-    language: NotGivenOr[str] = NOT_GIVEN  # en, hi, mr, kn, ta, bn, gu, de, fr, es, it, pl, nl, ru, ar, he
-
+    sample_rate: NotGivenOr[int] = NOT_GIVEN  # 8000-24000, default 24000
+    
 
 @dataclass
 class Voice:
@@ -96,7 +95,8 @@ class TTS(tts.TTS):
         word_tokenizer: NotGivenOr[tokenize.WordTokenizer] = NOT_GIVEN,
         enable_ssml_parsing: bool = False,
         http_session: aiohttp.ClientSession | None = None,
-        language: NotGivenOr[str] = NOT_GIVEN,
+        language: NotGivenOr[str] = NOT_GIVEN, # en, hi, mr, kn, ta, bn, gu, de, fr, es, it, pl, nl, ru, ar, he
+        encoding: NotGivenOr[int] = NOT_GIVEN,
     ) -> None:
         """
         Create a new instance of Smallest AI TTS.
