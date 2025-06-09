@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .models import TTSEncoding, TTSModels, TTSLanguages, TTSVoices
+from .models import TTSEncoding, TTSModels, TTSLanguages
 from .tts import TTS
 from .version import __version__
 
