@@ -17,7 +17,7 @@
 See https://docs.livekit.io/agents/integrations/tts/elevenlabs/ for more information.
 """
 
-from .models import TTSEncoding, TTSModels
+from .models import TTSModels
 from .tts import DEFAULT_VOICE_ID, TTS, Voice, VoiceSettings
 from .version import __version__
 
