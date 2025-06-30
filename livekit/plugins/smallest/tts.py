@@ -113,10 +113,8 @@ class TTS(tts.TTS):
     ) -> "ChunkedStream":
         return ChunkedStream(
             tts=self,
-            text=text,
+            input_text=text,  # Changed from 'text' to 'input_text'
             conn_options=conn_options,
-            opts=self._opts,
-            session=self._ensure_session(),
         )
 
 
@@ -126,25 +124,31 @@ class ChunkedStream(tts.ChunkedStream):
     def __init__(
         self,
         tts: TTS,
-        text: str,
-        opts: _TTSOptions,
+        input_text: str,  # Changed from 'text' to 'input_text'
         conn_options: APIConnectOptions,
-        session: aiohttp.ClientSession,
     ) -> None:
-        super().__init__(tts=tts, input_text=text, conn_options=conn_options)
-        self._text, self._opts, self._session = text, opts, session
+        super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
+        self._tts: TTS = tts
+        self._opts = tts._opts
+        self._session = tts._ensure_session()
 
     @utils.log_exceptions(logger=logger)
-    async def _run(self):
-        bstream = utils.audio.AudioByteStream(
-            sample_rate=self._opts.sample_rate, num_channels=NUM_CHANNELS
+    async def _run(self, output_emitter: tts.AudioEmitter) -> None:  # Fixed: Added output_emitter parameter
+        """Run the smallest.ai TTS request and emit audio via the output emitter."""
+        
+        # Initialize the output emitter
+        request_id = utils.shortuuid()
+        output_emitter.initialize(
+            request_id=request_id,
+            sample_rate=self._tts.sample_rate,
+            num_channels=self._tts.num_channels,
+            mime_type="audio/wav" if self._opts.add_wav_header else "audio/pcm",
         )
-        request_id, segment_id = utils.shortuuid(), utils.shortuuid()
 
         self._chunk_size = 250
         if self._opts.model == "lightning-large":
             self._chunk_size = 140
-        text_chunks = _split_into_chunks(self._text, self._chunk_size)
+        text_chunks = _split_into_chunks(self._input_text, self._chunk_size)
 
         for chunk in text_chunks:
             data = _to_smallest_options(self._opts)
@@ -156,29 +160,28 @@ class ChunkedStream(tts.ChunkedStream):
                 "Content-Type": "application/json",
             }
 
-            async with self._session.post(url, headers=headers, json=data) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    raise Exception(
-                        f"smallest.ai API error: {resp.status} - {error_text}"
-                    )
-
-                async for data, _ in resp.content.iter_chunks():
-                    for frame in bstream.write(data):
-                        self._event_ch.send_nowait(
-                            tts.SynthesizedAudio(
-                                request_id=request_id,
-                                segment_id=segment_id,
-                                frame=frame,
-                            )
+            try:
+                async with self._session.post(
+                    url, 
+                    headers=headers, 
+                    json=data,
+                    timeout=aiohttp.ClientTimeout(total=self._conn_options.timeout)
+                ) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.error(f"smallest.ai API error: {resp.status} - {error_text}")
+                        raise APIStatusError(
+                            message=f"smallest.ai API Error: {error_text}", 
+                            status_code=resp.status
                         )
 
-                for frame in bstream.flush():
-                    self._event_ch.send_nowait(
-                        tts.SynthesizedAudio(
-                            request_id=request_id, segment_id=segment_id, frame=frame
-                        )
-                    )
+                    # Read and emit the audio data
+                    audio_data = await resp.read()
+                    output_emitter.push(audio_data)
+                    
+            except Exception as e:
+                logger.error(f"Error in smallest.ai TTS: {e}")
+                raise
 
 
 def _to_smallest_options(opts: _TTSOptions) -> dict[str, Any]:
