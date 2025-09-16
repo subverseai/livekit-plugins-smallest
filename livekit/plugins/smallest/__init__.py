@@ -12,26 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .models import TTSEncoding, TTSModels, TTSLanguages
-from .tts import TTS
+"""Smallest AI plugin for LiveKit Agents
+
+See https://docs.livekit.io/agents/integrations/tts/smallestai/ for more information.
+"""
+
+from .tts import TTS, ChunkedStream
 from .version import __version__
 
-__all__ = [
-    "TTS",
-    "TTSEncoding",
-    "TTSModels",
-    "TTSLanguages",
-    "__version__",
-]
+__all__ = ["TTS", "ChunkedStream", "__version__"]
 
 from livekit.agents import Plugin
 
-from .log import logger
+
+class SmallestAIPlugin(Plugin):
+    def __init__(self) -> None:
+        super().__init__(__name__, __version__, __package__)
 
 
-class SmallestPlugin(Plugin):
-    def __init__(self):
-        super().__init__(__name__, __version__, __package__, logger)
+Plugin.register_plugin(SmallestAIPlugin())
 
+# Cleanup docs of unexported modules
+_module = dir()
+NOT_IN_ALL = [m for m in _module if m not in __all__]
 
-Plugin.register_plugin(SmallestPlugin())
+__pdoc__ = {}
+
+for n in NOT_IN_ALL:
+    __pdoc__[n] = False

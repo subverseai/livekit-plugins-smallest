@@ -1,15 +1,13 @@
-# ElevenLabs plugin for LiveKit Agents
+# LiveKit Plugins Smallest AI
 
-Support for voice synthesis with [Smallest](https://smallest.ai/).
-
-See [https://waves-docs.smallest.ai/v3.0.1/content/api-references/lightning-v2-stream](https://waves-docs.smallest.ai/v3.0.1/content/api-references/lightning-v2-stream) for more information.
+LiveKit Agent Framework plugin for speech synthesis with the [Smallest AI](https://smallest.ai/) API ([documentation](https://waves-docs.smallest.ai/)).
 
 ## Installation
 
 ```bash
-pip install livekit-plugins-smallest
+pip install livekit-plugins-smallestai
 ```
 
 ## Pre-requisites
 
-You'll need an API key from ElevenLabs. It can be set as an environment variable: `SMALLEST_API_KEY`
+You'll need an API key from Smallest AI. It can be set as an environment variable: `SMALLEST_API_KEY`

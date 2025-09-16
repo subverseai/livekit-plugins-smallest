@@ -1,76 +1,92 @@
+# Copyright 202 LiveKit, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
+import asyncio
 import os
-import re
-from dataclasses import dataclass
-from typing import Any, List, Optional
+from dataclasses import dataclass, replace
+from typing import Any
 
 import aiohttp
+
 from livekit.agents import (
     APIConnectionError,
     APIConnectOptions,
-    APIError,
     APIStatusError,
     APITimeoutError,
-    tokenize,
     tts,
     utils,
 )
 from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, NotGivenOr
+from livekit.agents.utils import is_given
 
 from .log import logger
-from .models import TTSEncoding, TTSLanguages, TTSModels
+from .models import TTSEncoding, TTSModels
 
 NUM_CHANNELS = 1
-SENTENCE_END_REGEX = re.compile(r'.*[-.—!?,;:…।|]$')
-API_BASE_URL = "https://waves-api.smallest.ai/api/v1"
+SMALLEST_BASE_URL = "https://waves-api.smallest.ai/api/v1"
 
 
 @dataclass
 class _TTSOptions:
-    model: TTSModels
-    encoding: TTSEncoding
-    voice: str
+    model: TTSModels | str
     api_key: str
-    language: TTSLanguages # en, hi, mr, kn, ta, bn, gu, de, fr, es, it, pl, nl, ru, ar, he
-    sample_rate: NotGivenOr[int] = NOT_GIVEN  # 8000-24000, default 24000
-    add_wav_header: NotGivenOr[bool] = NOT_GIVEN # default False
-    transliterate: NotGivenOr[bool] = NOT_GIVEN # default False
-    similarity: NotGivenOr[float] = NOT_GIVEN  # 0-1, default 0
-    speed: NotGivenOr[float] = NOT_GIVEN  # 0.5-2.0, default 1.0
-    consistency: NotGivenOr[float] = NOT_GIVEN  # 0-1, default 0.5
-    enhancement: NotGivenOr[int] = NOT_GIVEN  # 0-2, default 1
+    voice_id: str
+    sample_rate: int
+    speed: float
+    consistency: float
+    similarity: float
+    enhancement: float
+    language: str
+    output_format: TTSEncoding | str
+    base_url: str
 
 
 class TTS(tts.TTS):
     def __init__(
         self,
         *,
-        api_key: NotGivenOr[str] = NOT_GIVEN,
-        model: TTSModels | str = "lightning-v2",
-        sample_rate: NotGivenOr[int] = 24000,
+        api_key: str | None = None,
+        model: TTSModels | str = "lightning-large",
+        voice_id: str = "irisha",
+        sample_rate: int = 24000,
+        speed: float = 1.0,
+        consistency: float = 0.5,
+        similarity: float = 0,
+        enhancement: float = 1,
         language: str = "en",
-        voice: str = "emily",
-        add_wav_header: NotGivenOr[bool] = False,
-        transliterate: NotGivenOr[bool] = False,
-        similarity: NotGivenOr[float] = 0,
-        speed: NotGivenOr[float] = 1.0,
-        consistency: NotGivenOr[float] = 0.5,
-        enhancement: NotGivenOr[int] = 1,
-        encoding: TTSEncoding = "pcm_s16le",
+        output_format: TTSEncoding | str = "pcm",
+        base_url: str = SMALLEST_BASE_URL,
         http_session: aiohttp.ClientSession | None = None,
     ) -> None:
         """
         Create a new instance of smallest.ai Waves TTS.
         Args:
-            model (TTSModels, optional): The Waves TTS model to use. Defaults to "lightning".
-            language (TTSLanguages, optional): The language code for synthesis. Defaults to "en".
-            encoding (TTSEncoding, optional): The audio encoding format. Defaults to "pcm_s16le".
-            voice (VoiceSettings, optional): The voice settings to use. Defaults to "emily".
-            sample_rate (int, optional): The audio sample rate in Hz. Defaults to 24000.
-            api_key (str, optional): The smallest.ai API key. If not provided, it will be read from the SMALLEST_API_KEY environment variable.
-            add_wav_header (bool, optional): If True, includes a WAV header in the audio output; otherwise, only raw audio data is returned.
-            http_session (aiohttp.ClientSession | None, optional): An existing aiohttp ClientSession to use. If not provided, a new session will be created.
+            api_key: Your Smallest AI API key.
+            model: The TTS model to use (e.g., "lightning", "lightning-large", "lightning-v2").
+            voice_id: The voice ID to use for synthesis.
+            sample_rate: Sample rate for the audio output.
+            speed: Speed of the speech synthesis.
+            consistency: Consistency of the speech synthesis.
+            similarity: Similarity of the speech synthesis.
+            enhancement: Enhancement level for the speech synthesis.
+            language: Language of the text to be synthesized.
+            output_format: Output format of the audio.
+            base_url: Base URL for the Smallest AI API.
+            http_session: An existing aiohttp ClientSession to use.
+            tokenizer: The tokenizer to use for streaming.
         """
 
         super().__init__(
@@ -83,19 +99,23 @@ class TTS(tts.TTS):
         if not api_key:
             raise ValueError("SMALLEST_API_KEY must be set")
 
+        if (consistency or similarity or enhancement) and model == "lightning":
+            logger.warning(
+                "consistency, similarity, and enhancement are only supported for model 'lightning-large' and 'lightning-v2'. "
+            )
+
         self._opts = _TTSOptions(
             model=model,
-            language=language,
-            encoding=encoding,
-            sample_rate=sample_rate,
-            voice=voice,
             api_key=api_key,
-            transliterate=transliterate,
-            add_wav_header=add_wav_header,
-            similarity=similarity,
+            voice_id=voice_id,
+            sample_rate=sample_rate,
             speed=speed,
             consistency=consistency,
+            similarity=similarity,
             enhancement=enhancement,
+            language=language,
+            output_format=output_format,
+            base_url=base_url,
         )
         self._session = http_session
 
@@ -105,15 +125,48 @@ class TTS(tts.TTS):
 
         return self._session
 
+    def update_options(
+        self,
+        *,
+        model: NotGivenOr[TTSModels | str] = NOT_GIVEN,
+        voice_id: NotGivenOr[str] = NOT_GIVEN,
+        speed: NotGivenOr[float] = NOT_GIVEN,
+        sample_rate: NotGivenOr[int] = NOT_GIVEN,
+        consistency: NotGivenOr[float] = NOT_GIVEN,
+        similarity: NotGivenOr[float] = NOT_GIVEN,
+        enhancement: NotGivenOr[float] = NOT_GIVEN,
+        language: NotGivenOr[str] = NOT_GIVEN,
+        output_format: NotGivenOr[TTSEncoding | str] = NOT_GIVEN,
+    ) -> None:
+        """Update TTS options."""
+        if is_given(model):
+            self._opts.model = model
+        if is_given(voice_id):
+            self._opts.voice_id = voice_id
+        if is_given(speed):
+            self._opts.speed = speed
+        if is_given(sample_rate):
+            self._opts.sample_rate = sample_rate
+        if is_given(consistency):
+            self._opts.consistency = consistency
+        if is_given(similarity):
+            self._opts.similarity = similarity
+        if is_given(enhancement):
+            self._opts.enhancement = enhancement
+        if is_given(language):
+            self._opts.language = language
+        if is_given(output_format):
+            self._opts.output_format = output_format
+
     def synthesize(
         self,
         text: str,
         *,
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
-    ) -> "ChunkedStream":
+    ) -> ChunkedStream:
         return ChunkedStream(
             tts=self,
-            input_text=text,  # Changed from 'text' to 'input_text'
+            input_text=text,
             conn_options=conn_options,
         )
 
@@ -121,106 +174,58 @@ class TTS(tts.TTS):
 class ChunkedStream(tts.ChunkedStream):
     """Synthesize chunked text using the Waves API endpoint"""
 
-    def __init__(
-        self,
-        tts: TTS,
-        input_text: str,  # Changed from 'text' to 'input_text'
-        conn_options: APIConnectOptions,
-    ) -> None:
+    def __init__(self, *, tts: TTS, input_text: str, conn_options: APIConnectOptions) -> None:
         super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
         self._tts: TTS = tts
-        self._opts = tts._opts
-        self._session = tts._ensure_session()
+        self._opts = replace(tts._opts)
 
-    @utils.log_exceptions(logger=logger)
-    async def _run(self, output_emitter: tts.AudioEmitter) -> None:  # Fixed: Added output_emitter parameter
-        """Run the smallest.ai TTS request and emit audio via the output emitter."""
-        
-        # Initialize the output emitter
-        request_id = utils.shortuuid()
-        output_emitter.initialize(
-            request_id=request_id,
-            sample_rate=self._tts.sample_rate,
-            num_channels=self._tts.num_channels,
-            mime_type="audio/wav" if self._opts.add_wav_header else "audio/pcm",
-        )
-
-        self._chunk_size = 250
-        if self._opts.model == "lightning-large":
-            self._chunk_size = 140
-        text_chunks = _split_into_chunks(self._input_text, self._chunk_size)
-
-        for chunk in text_chunks:
+    async def _run(self, output_emitter: tts.AudioEmitter) -> None:
+        """Run the chunked synthesis process."""
+        try:
             data = _to_smallest_options(self._opts)
-            data["text"] = chunk
+            data["text"] = self._input_text
 
-            url = f"{API_BASE_URL}/{self._opts.model}/get_speech"
+            url = f"{SMALLEST_BASE_URL}/{self._opts.model}/get_speech_long_text"
+            if self._opts.model == "lightning-v2":
+                url = f"{SMALLEST_BASE_URL}/{self._opts.model}/get_speech"
+
             headers = {
                 "Authorization": f"Bearer {self._opts.api_key}",
                 "Content-Type": "application/json",
             }
+            async with self._tts._ensure_session().post(
+                url,
+                headers=headers,
+                json=data,
+                timeout=aiohttp.ClientTimeout(total=self._conn_options.timeout),
+            ) as resp:
+                resp.raise_for_status()
 
-            try:
-                async with self._session.post(
-                    url, 
-                    headers=headers, 
-                    json=data,
-                    timeout=aiohttp.ClientTimeout(total=self._conn_options.timeout)
-                ) as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        logger.error(f"smallest.ai API error: {resp.status} - {error_text}")
-                        raise APIStatusError(
-                            message=f"smallest.ai API Error: {error_text}", 
-                            status_code=resp.status
-                        )
+                output_emitter.initialize(
+                    request_id=utils.shortuuid(),
+                    sample_rate=self._opts.sample_rate,
+                    num_channels=NUM_CHANNELS,
+                    mime_type=f"audio/{self._opts.output_format}",
+                )
 
-                    # Read and emit the audio data
-                    audio_data = await resp.read()
-                    output_emitter.push(audio_data)
-                    
-            except Exception as e:
-                logger.error(f"Error in smallest.ai TTS: {e}")
-                raise
+                async for data, _ in resp.content.iter_chunks():
+                    output_emitter.push(data)
+
+                output_emitter.flush()
+
+        except asyncio.TimeoutError:
+            raise APITimeoutError() from None
+        except aiohttp.ClientResponseError as e:
+            raise APIStatusError(
+                message=e.message, status_code=e.status, request_id=None, body=None
+            ) from None
+        except Exception as e:
+            raise APIConnectionError() from e
 
 
 def _to_smallest_options(opts: _TTSOptions) -> dict[str, Any]:
-    return {
-        "voice_id": opts.voice,
-        "sample_rate": opts.sample_rate,
-        "add_wav_header": opts.add_wav_header,
-        "similarity": opts.similarity,
-        "speed": opts.speed,
-        "consistency": opts.consistency,
-        "enhancement": opts.enhancement,
-    }
+    base_keys = ["voice_id", "sample_rate", "speed", "language", "output_format"]
+    extra_keys = ["consistency", "similarity", "enhancement"]
 
-
-def _split_into_chunks(text: str, chunk_size: int = 250) -> List[str]:
-    chunks = []
-    while text:
-        if len(text) <= chunk_size:
-            chunks.append(text.strip())
-            break
-
-        chunk_text = text[:chunk_size]
-        last_break_index = -1
-
-        # Find last sentence boundary using regex
-        for i in range(len(chunk_text) - 1, -1, -1):
-            if SENTENCE_END_REGEX.match(chunk_text[:i + 1]):
-                last_break_index = i
-                break
-
-        if last_break_index == -1:
-            # Fallback to space if no sentence boundary found
-            last_space = chunk_text.rfind(' ')
-            if last_space != -1:
-                last_break_index = last_space 
-            else:
-                last_break_index = chunk_size - 1
-
-        chunks.append(text[:last_break_index + 1].strip())
-        text = text[last_break_index + 1:].strip()
-
-    return chunks
+    keys = base_keys if opts.model == "lightning" else base_keys + extra_keys
+    return {key: getattr(opts, key) for key in keys}
